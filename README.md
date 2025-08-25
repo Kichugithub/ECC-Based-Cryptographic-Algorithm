@@ -22,10 +22,10 @@ Shared Secret Key: A key known only to two parties, used to encrypt and decrypt 
 
 
 ## Novelty
-Focus on ECC architecture tailored for IoT using the Montgomery curve. 
--Innovative approach combining security and efficiency for IoT.
--Prioritizes low delay and high-speed communication.
--Unique solution for secure, real-time processing in smart devices.
+-Focus on ECC architecture tailored for IoT using the Montgomery curve. 
+ -Innovative approach combining security and efficiency for IoT.
+ -Prioritizes low delay and high-speed communication.
+ -Unique solution for secure, real-time processing in smart devices.
 
 
 ##  Tools & Tech Stack
