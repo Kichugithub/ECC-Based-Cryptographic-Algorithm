@@ -1,0 +1,270 @@
+module Curve25519 (
+    input [255:0] private_key, 
+    input [255:0] base, 
+    output reg [255:0] public_key
+);
+
+    parameter [255:0] P = 256'h7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFED;
+    parameter [255:0] A = 486662;
+    reg [255:0] mP_x, mP_z, m1P_x, m1P_z;
+    reg [255:0] mP_x_temp, mP_z_temp, m1P_x_temp, m1P_z_temp;
+    reg swap_bit;
+    integer i;
+
+    // Modular multiplication
+    function [255:0] mod_mult;
+        input [255:0] a, b, mod;
+        reg [511:0] product;
+        begin
+            product = a * b;
+            mod_mult = product % mod;
+        end
+    endfunction
+
+
+
+    // Modular exponentiation (z^(p-2) mod p) for modular inversion
+    function [255:0] mod_exp;
+        input [255:0] base, exp, mod;
+        reg [255:0] result, base_temp;
+        reg [255:0] exp_temp;
+        integer i;
+        begin
+            result = 256'd1;
+            base_temp = base % mod;
+            exp_temp = exp;
+
+            for (i = 0; i < 256; i = i + 1) begin
+                if (exp_temp[0] == 1) begin
+                    result = mod_mult(result, base_temp, mod);
+                end
+                base_temp = mod_mult(base_temp, base_temp, mod);
+                exp_temp = exp_temp >> 1;
+            end
+            mod_exp = result;
+        end
+    endfunction
+
+    // Modular inversion using Fermat's theorem
+    function [255:0] mod_inv;
+        input [255:0] z;
+        begin
+            mod_inv = mod_exp(z, P - 2, P);
+        end
+    endfunction
+
+    // Point addition in Montgomery form
+    task point_add;
+    input  [255:0] xn, zn, xm, zm, x_diff, z_diff;
+    output [255:0] x_out, z_out;
+    reg [511:0] xm_xn, zm_zn, xm_zn, zm_xn;
+    reg [511:0] x_num, z_num;
+    reg [511:0] diff1, diff2, term1, term2;
+    parameter [255:0] P = 256'h7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFED;
+    begin
+        // Compute intermediate values
+        xm_xn = (xm * xn) % P;
+        zm_zn = (zm * zn) % P;
+        xm_zn = (xm * zn) % P;
+        zm_xn = (zm * xn) % P;
+
+        // Compute differences
+        diff1 = (xm_xn + P - zm_zn) % P;  // Ensuring non-negative result
+        diff2 = (xm_zn + P - zm_xn) % P;
+
+        // Compute numerators
+        term1 = ((z_diff << 2) % P) * diff1 % P;
+        term2 = ((x_diff << 2) % P) * diff2 % P;
+        x_num = (term1 * diff1) % P;
+        z_num = (term2 * diff2) % P;
+
+
+        // Apply modulo operation and return results
+        x_out = x_num % P;
+        z_out = z_num % P;
+    end
+endtask
+
+
+task point_double;
+    input [255:0] xn, zn;
+    output [255:0] x_out, z_out;
+    reg [511:0] xn2, zn2, xzn, x_num, z_num, term1, term2;
+    parameter [255:0] P = 256'h7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFED;
+    parameter [255:0] A = 256'd486662;
+    begin
+        // Compute intermediate values with modular reduction
+        xn2 = (xn * xn) % P;  // xn^2 mod P
+        zn2 = (zn * zn) % P;  // zn^2 mod P
+        xzn = (xn * zn) % P;  // xn * zn mod P
+
+        // Compute numerators with intermediate reduction
+        term1 = (xn2 >= zn2) ? (xn2 - zn2) : (P + xn2 - zn2);  // Handle underflow
+        term1 = (term1 * term1) % P;  // (xn2 - zn2)^2 mod P
+        x_num = term1;
+
+        term2 = (xn2 + (A * xzn) % P + zn2) % P;  // (xn2 + A * xzn + zn2) mod P
+        z_num = (4 * xzn * term2) % P;  // Full modulo reduction
+
+        // Assign outputs
+        x_out = x_num;
+        z_out = z_num;
+
+    end
+endtask
+
+
+    
+task montgomery_ladder;
+    input [255:0] base, scalar;
+    output [255:0] result; // The final public key output
+
+    reg [255:0] X1, Z1, X2, Z2, X3, Z3;
+    integer i;
+    reg swap;
+    reg [255:0] tmpX, tmpZ;
+    reg [255:0] x_d, z_d, x_a, z_a; // Outputs for point_double and point_add
+
+    parameter [255:0] P = 256'h7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFED;
+
+    begin
+        X1 = base;
+        Z1 = 1;
+        X2 = 1;
+        Z2 = 0;
+
+        for (i = 255; i >= 0; i = i - 1) begin         
+            swap = scalar[i];
+            // Swap conditionally
+            
+            
+            // Perform point doubling
+            if (swap) begin
+        
+                tmpX = X1; tmpZ = Z1;
+                X1 = X2; Z1 = Z2;
+                X2 = tmpX; Z2 = tmpZ;
+            end
+            
+             //Perform point doubling
+            X3 = X2;
+            Z3 = Z2;
+            point_double(X2, Z2, x_d, z_d);
+            X2 = x_d;
+            Z2 = z_d;
+
+            // Perform point addition
+            point_add(X3, Z3, X1, Z1, base, 1, x_a, z_a);
+            
+            X1 = x_a;
+            Z1 = z_a;
+
+            // Swap back conditionally
+            if (swap) begin
+                tmpX = X1; tmpZ = Z1;
+                X1 = X2; Z1 = Z2;
+                X2 = tmpX; Z2 = tmpZ;
+            end
+        end
+
+        // Convert back to affine coordinates
+        result = mod_mult(X2, mod_inv(Z2), P);  
+    end
+endtask
+
+    always @(*) begin
+         montgomery_ladder(base, private_key,public_key);
+    end
+
+endmodule
+
+
+module DiffieHellman (
+    input [255:0] private_key_A, // Private key of A
+    input [255:0] private_key_B, // Private key of B
+    input [255:0] base,          // Base point (typically a constant for Curve25519)
+    output [255:0] shared_key_A, // Shared key computed by A
+    output [255:0] shared_key_B  // Shared key computed by B
+);
+
+    // Parameters for Curve25519
+    parameter [255:0] P = 256'h7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFED;
+    
+    wire [255:0] public_key_A, public_key_B;
+    
+    // Instance of Curve25519 to compute public keys
+    Curve25519 curve_A (
+        .private_key(private_key_A),
+        .base(base),
+        .public_key(public_key_A)
+    );
+    
+    Curve25519 curve_B (
+        .private_key(private_key_B),
+        .base(base),
+        .public_key(public_key_B)
+    );
+
+    // Instance of Curve25519 to compute shared keys
+    Curve25519 curve_shared_A (
+        .private_key(private_key_A),
+        .base(public_key_B),
+        .public_key(shared_key_A)
+    );
+    
+    Curve25519 curve_shared_B (
+        .private_key(private_key_B),
+        .base(public_key_A),
+        .public_key(shared_key_B)
+    );
+     // Initial block to print values during simulation
+    initial begin
+        // Print the public keys after computation
+        #10; // Add a small delay to ensure the computations are done
+        $display("Public Key A: %h", public_key_A);  // Print public_key_A in hexadecimal format
+        $display("Public Key B: %h", public_key_B);  // Print public_key_B in hexadecimal format
+    end
+endmodule
+
+module tb_DiffieHellman;
+
+    // Inputs
+    reg [255:0] private_key_A;
+    reg [255:0] private_key_B;
+    reg [255:0] base;
+    
+    // Outputs
+    wire [255:0] shared_key_A;
+    wire [255:0] shared_key_B;
+
+    // Instantiate the DiffieHellman module
+    DiffieHellman dh (
+        .private_key_A(private_key_A),
+        .private_key_B(private_key_B),
+        .base(base),
+        .shared_key_A(shared_key_A),
+        .shared_key_B(shared_key_B)
+    );
+
+    // Initial block for stimulus
+    initial begin
+        // Set up the base point for Diffie-Hellman (base = 9)
+        base = 256'd9;
+
+        // Test 1: Alice's private key and Bob's private key as provided
+        private_key_A = 256'hA67210AEE; // Alice's private key
+        private_key_B = 256'h678BAEF; // Bob's private key
+        
+        // Apply test vectors (wait some time for computations)
+        #10;
+        
+        // Display results
+        $display("Test 1: Alice and Bob's Shared Key:");
+        $display("Shared Key A (computed by Alice): %d", shared_key_A);
+        $display("Shared Key B (computed by Bob): %d", shared_key_B);
+
+        // Test complete, stop simulation
+        $finish;
+    end
+
+endmodule
